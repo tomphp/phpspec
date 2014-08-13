@@ -14,6 +14,7 @@
 namespace PhpSpec\Config;
 
 use PhpSpec\Exception\Config\SuiteConfigException;
+use PhpSpec\Exception\Config\ExtensionConfigException;
 
 class Config
 {
@@ -27,7 +28,18 @@ class Config
         'spec_prefix',
         'src_path',
         'spec_path',
+        'psr4_prefix'
     );
+
+    /**
+      * @var string
+      */
+    private $homeDir;
+
+    /**
+      * @var string
+      */
+    private $currentWorkingDir;
 
     /**
       * @var array
@@ -40,14 +52,35 @@ class Config
     private $formatterName;
 
     /**
+      * @var array
+      */
+    private $extensions;
+
+    /**
+      * @var array
+      */
+    private $generatorTemplates;
+
+    /**
+      * @var int
+      */
+    private $runnerErrorLevels;
+
+    /**
      * @param array $config
      *
      * @throws \PhpSpec\Exception\Config\SuiteConfigException
      */
-    public function __construct(array $config)
+    public function __construct(array $config, $homeDir, $currentWorkingDir)
     {
-        $this->suites        = $this->loadSuitesConfig($config);
-        $this->formatterName = $this->loadFormatterConfig($config);
+        $this->homeDir           = $homeDir;
+        $this->currentWorkingDir = $currentWorkingDir;
+
+        $this->suites             = $this->loadSuitesConfig($config);
+        $this->formatterName      = $this->loadFormatterConfig($config);
+        $this->extensions         = $this->loadExtensionsConfig($config);
+        $this->generatorTemplates = $this->loadGeneratorTemplatesConfig($config);
+        $this->runnerErrorLevels  = $this->loadRunnerErrorLevelConfig($config);
     }
 
     /**
@@ -71,7 +104,23 @@ class Config
      */
     public function getExtensions()
     {
-        return array();
+        return $this->extensions;
+    }
+
+    /**
+     * @return string[]
+     */
+    public function getCodeGeneratorTemplatePaths()
+    {
+        return $this->generatorTemplates;
+    }
+
+    /**
+     * @return int
+     */
+    public function getRunnerErrorLevels()
+    {
+        return $this->runnerErrorLevels;
     }
 
     /**
@@ -81,15 +130,127 @@ class Config
      */
     private function loadSuitesConfig(array $config)
     {
-        if (!array_key_exists('suites', $config)) {
-            return array();
+        return $this->loadCallbackIfKeyExists(
+            $config,
+            'suites',
+            function ($config) {
+                if (!is_array($config)) {
+                    throw SuiteConfigException::suitesMustBeAList();
+                }
+
+                return $this->processSuitesConfig($config);
+            },
+            array('main' => '')
+        );
+    }
+
+    /**
+     * @param array $config
+     *
+     * @return string
+     */
+    private function loadFormatterConfig(array $config)
+    {
+        return $this->loadValueIfKeyExists(
+            $config,
+            'formatter.name',
+            self::DEFAULT_FORMATTER_NAME
+        );
+    }
+
+    /**
+     * @param array $config
+     *
+     * @return array
+     */
+    private function loadExtensionsConfig(array $config)
+    {
+        return $this->loadCallbackIfKeyExists(
+            $config,
+            'extensions',
+            function ($config) {
+                if (!is_array($config)) {
+                    throw ExtensionConfigException::mustBeAList();
+                }
+
+                return $config;
+            },
+            array()
+        );
+    }
+
+    /**
+     * @param array $config
+     *
+     * @return array
+     */
+    private function loadGeneratorTemplatesConfig(array $config)
+    {
+        return $this->loadCallbackIfKeyExists(
+            $config,
+            'code_generator.templates.paths',
+            function ($config) {
+                if (!is_array($config)) {
+                    return array($config);
+                }
+
+                return $config;
+            },
+            array(
+                $this->currentWorkingDir . DIRECTORY_SEPARATOR . '.phpspec',
+                $this->homeDir . DIRECTORY_SEPARATOR . '.phpspec'
+            )
+        );
+    }
+
+    /**
+     * @param array $config
+     *
+     * @return int
+     */
+    private function loadRunnerErrorLevelConfig(array $config)
+    {
+        return $this->loadValueIfKeyExists(
+            $config,
+            'runner.maintainers.errors.levels',
+            E_ALL ^ E_STRICT
+        );
+    }
+
+    /**
+     * @param array  $config
+     * @param string $configKey
+     * @param mixed  $default
+     *
+     * @return mixed
+     */
+    private function loadValueIfKeyExists(array $config, $configKey, $default)
+    {
+        return $this->loadCallbackIfKeyExists(
+            $config,
+            $configKey,
+            function ($config) {
+                return $config;
+            },
+            $default
+        );
+    }
+
+    /**
+     * @param array    $config
+     * @param string   $configKey
+     * @param callable $loadAction
+     * @param mixed    $default
+     *
+     * @return mixed
+     */
+    private function loadCallbackIfKeyExists(array $config, $configKey, callable $loadAction, $default)
+    {
+        if (!array_key_exists($configKey, $config)) {
+            return $default;
         }
 
-        if (!is_array($config['suites'])) {
-            throw SuiteConfigException::suitesMustBeAList();
-        }
-
-        return $this->processSuitesConfig($config['suites']);
+        return $loadAction($config[$configKey]);
     }
 
     /**
@@ -128,7 +289,6 @@ class Config
             $this->assertSuiteSettingIsValid($suite, $setting);
         }
 
-
         return $settings;
     }
 
@@ -141,19 +301,5 @@ class Config
         if (!in_array($setting, self::$validSuiteSettings)) {
             throw SuiteConfigException::invalidSetting($suite, $setting);
         }
-    }
-
-    /**
-     * @param array $config
-     *
-     * @return string
-     */
-    private function loadFormatterConfig(array $config)
-    {
-        if (!array_key_exists('formatter.name', $config)) {
-            return self::DEFAULT_FORMATTER_NAME;
-        }
-
-        return $config['formatter.name'];
     }
 }

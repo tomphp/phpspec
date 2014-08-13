@@ -84,7 +84,7 @@ EOF
     {
         $container = $this->getApplication()->getContainer();
         $container->setParam('formatter.name',
-            $input->getOption('format') ?: $container->getParam('formatter.name')
+            $input->getOption('format') ?: $container->get('config')->getFormatterName()
         );
         $container->configure();
 

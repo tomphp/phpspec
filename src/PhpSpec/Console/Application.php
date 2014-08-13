@@ -31,6 +31,7 @@ use PhpSpec\Locator;
 use PhpSpec\Runner;
 use PhpSpec\CodeGenerator;
 use PhpSpec\Wrapper;
+use PhpSpec\Config\Config;
 
 /**
  * The command line application entry point
@@ -72,7 +73,10 @@ class Application extends BaseApplication
         $this->container->set('console.helpers', $this->getHelperSet());
 
         $this->setupContainer($this->container);
-        $this->loadConfigurationFile($input, $this->container);
+
+        $config = $this->loadConfigurationFile($input, $this->container);
+        $this->container->set('config', $config);
+        $this->loadExtensions($config);
 
         foreach ($this->container->getByPrefix('console.commands') as $command) {
             $this->add($command);
@@ -239,21 +243,10 @@ class Application extends BaseApplication
 
         $container->setShared('code_generator.templates', function ($c) {
             $renderer = new CodeGenerator\TemplateRenderer;
-            $renderer->setLocations($c->getParam('code_generator.templates.paths', array()));
+            $renderer->setLocations($c->get('config')->getCodeGeneratorTemplatePaths());
 
             return $renderer;
         });
-
-        if (!empty($_SERVER['HOMEDRIVE']) && !empty($_SERVER['HOMEPATH'])) {
-            $home = $_SERVER['HOMEDRIVE'] . $_SERVER['HOMEPATH'];
-        } else {
-            $home = $_SERVER['HOME'];
-        }
-
-        $container->setParam('code_generator.templates.paths', array(
-            rtrim(getcwd(), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'.phpspec',
-            rtrim($home, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'.phpspec',
-        ));
     }
 
     /**
@@ -301,7 +294,7 @@ class Application extends BaseApplication
         });
 
         $container->addConfigurator(function ($c) {
-            $suites = $c->getParam('suites', array('main' => ''));
+            $suites = $c->get('config')->getSuites();
 
             foreach ($suites as $name => $suite) {
                 $suite      = is_array($suite) ? $suite : array('namespace' => $suite);
@@ -367,7 +360,7 @@ class Application extends BaseApplication
         });
 
         $container->addConfigurator(function ($c) {
-            $formatterName = $c->getParam('formatter.name', 'progress');
+            $formatterName = $c->get('console.input')->getOption('format') ?: $c->get('config')->getFormatterName();
 
             $c->get('console.output')->setFormatter(new \PhpSpec\Console\Formatter(
                 $c->get('console.output')->isDecorated()
@@ -418,7 +411,7 @@ class Application extends BaseApplication
 
         $container->set('runner.maintainers.errors', function ($c) {
             return new Runner\Maintainer\ErrorMaintainer(
-                $c->getParam('runner.maintainers.errors.level', E_ALL ^ E_STRICT)
+                $c->get('config')->getRunnerErrorLevels()
             );
         });
         $container->set('runner.maintainers.collaborators', function ($c) {
@@ -449,32 +442,23 @@ class Application extends BaseApplication
     /**
      * @param ServiceContainer $container
      *
+     * @return Config
+     *
      * @throws \RuntimeException
      */
     protected function loadConfigurationFile(InputInterface $input, ServiceContainer $container)
     {
-        $config = $this->parseConfigurationFile($input);
-
-        foreach ($config as $key => $val) {
-            if ('extensions' === $key && is_array($val)) {
-                foreach ($val as $class) {
-                    $extension = new $class;
-
-                    if (!$extension instanceof Extension\ExtensionInterface) {
-                        throw new RuntimeException(sprintf(
-                            'Extension class must implement ExtensionInterface. But `%s` is not.',
-                            $class
-                        ));
-                    }
-
-                    $extension->load($container);
-                }
-
-                continue;
-            }
-
-            $container->setParam($key, $val);
+        if (!empty($_SERVER['HOMEDRIVE']) && !empty($_SERVER['HOMEPATH'])) {
+            $home = $_SERVER['HOMEDRIVE'] . $_SERVER['HOMEPATH'];
+        } else {
+            $home = $_SERVER['HOME'];
         }
+
+        return new Config(
+            $this->parseConfigurationFile($input),
+            rtrim($home, DIRECTORY_SEPARATOR),
+            rtrim(getcwd(), DIRECTORY_SEPARATOR)
+        );
     }
 
     /**
@@ -498,5 +482,21 @@ class Application extends BaseApplication
         }
 
         return array();
+    }
+
+    protected function loadExtensions(Config $config)
+    {
+        foreach ($config->getExtensions() as $class) {
+            $extension = new $class;
+
+            if (!$extension instanceof Extension\ExtensionInterface) {
+                throw new RuntimeException(sprintf(
+                    'Extension class must implement ExtensionInterface. But `%s` is not.',
+                    $class
+                ));
+            }
+
+            $extension->load($container);
+        }
     }
 }
